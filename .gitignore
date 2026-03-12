@@ -3,3 +3,9 @@
 examples/
 __pycache__/
 tests/
+
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
