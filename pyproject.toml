@@ -1,0 +1,57 @@
+# pyproject.toml
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "Flask-Iris"
+version = "0.1.0"
+description = "Flask integration for the Iris distributed runtime fabric, providing Erlang-style actors and native JIT compute."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "AGPL-3.0" }
+authors = [
+    { name = "Seuriin", email = "seuriin@gmail.com" }
+]
+keywords = [
+    "flask",
+    "iris",
+    "actor-model",
+    "distributed",
+    "mesh",
+    "jit",
+    "cranelift",
+    "concurrency"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Framework :: Flask",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+]
+dependencies = [
+    "Flask>=2.0.0",
+    "iris"
+]
+
+[project.urls]
+Homepage = "https://github.com/SSL-ACTX/flask-iris"
+Repository = "https://github.com/SSL-ACTX/flask-iris.git"
+"Bug Tracker" = "https://github.com/SSL-ACTX/flask-iris/issues"
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+testpaths = [
+    "tests",
+]
