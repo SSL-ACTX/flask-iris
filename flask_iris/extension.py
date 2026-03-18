@@ -2,10 +2,14 @@
 import asyncio
 import orjson
 import functools
+import logging
 from typing import Optional, Callable, Union, Awaitable, Any
 import iris
 from iris import PySystemMessage
 from flask import Flask
+
+# Internal logger for handling serialization fallbacks silently
+logger = logging.getLogger("flask_iris")
 
 class FlaskIris:
     """
@@ -62,7 +66,7 @@ class FlaskIris:
                         # orjson natively parses bytes directly. No decoding needed.
                         payload = orjson.loads(msg)
                         return fn(payload)
-                    except orjson.JSONDecodeError:
+                    except (orjson.JSONDecodeError, TypeError):
                         pass # Fallback to raw message if decoding fails
                 return fn(msg)
 
@@ -89,7 +93,7 @@ class FlaskIris:
                         # orjson natively parses bytes directly. No decoding needed.
                         payload = orjson.loads(msg)
                         return fn(payload)
-                    except orjson.JSONDecodeError:
+                    except (orjson.JSONDecodeError, TypeError):
                         pass
                 return fn(msg)
 
@@ -111,20 +115,45 @@ class FlaskIris:
             return fn
         return decorator
 
-    def _prepare_payload(self, payload: Union[dict, list, str, bytes]) -> bytes:
-        """Smart helper to convert various types into bytes for the Iris mesh."""
-        if isinstance(payload, (dict, list)):
-            # orjson.dumps inherently returns bytes, avoiding secondary encodings
-            return orjson.dumps(payload)
-        elif isinstance(payload, str):
+    def _prepare_payload(self, payload: Any) -> bytes:
+        """
+        Smart helper to convert various types into bytes for the Iris mesh.
+        Handles dicts, lists, strings, and raw bytes.
+        """
+        if isinstance(payload, bytes):
+            return payload
+        if isinstance(payload, str):
             return payload.encode('utf-8')
-        return payload
+        
+        try:
+            # orjson.dumps returns bytes directly
+            return orjson.dumps(payload)
+        except (TypeError, orjson.JSONEncodeError):
+            try:
+                # Last resort fallback for non-serializable objects
+                return str(payload).encode('utf-8')
+            except Exception as e:
+                logger.error(f"Iris payload preparation failed: {e}")
+                return b""
 
-    def cast(self, name: str, payload: Union[dict, list, str, bytes]) -> bool:
-        """Smart helper to serialize and send a payload to a registered actor."""
-        return self.send_named(name, self._prepare_payload(payload))
+    def cast(self, target: Union[str, int], payload: Any) -> bool:
+        """
+        Smart helper to serialize and send a payload.
+        Handles both registered names (str) and PIDs (int).
+        
+        This fixed version checks the type of 'target' to avoid 
+        TypeError when passing remote proxy PIDs.
+        """
+        data = self._prepare_payload(payload)
+        
+        # If target is an integer, it is a PID. Use direct send.
+        if isinstance(target, int):
+            return self.send(target, data)
+        
+        # If target is a string, resolve name and send.
+        return self.send_named(str(target), data)
 
-    def cast_path(self, path: str, payload: Union[dict, list, str, bytes]) -> bool:
+    def cast_path(self, path: str, payload: Any) -> bool:
         """Smart helper to serialize and send a payload to a path-registered actor."""
         target_pid = self.whereis_path(path)
         if target_pid:
