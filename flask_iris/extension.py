@@ -1,12 +1,19 @@
 # flask_iris/extension.py
 import asyncio
-import orjson
 import functools
 import logging
 from typing import Optional, Callable, Union, Awaitable, Any
 import iris
 from iris import PySystemMessage
 from flask import Flask
+
+# Conditional import for robust JSON fallback
+try:
+    import orjson
+    HAS_ORJSON = True
+except ImportError:
+    import json
+    HAS_ORJSON = False
 
 # Internal logger for handling serialization fallbacks silently
 logger = logging.getLogger("flask_iris")
@@ -48,6 +55,21 @@ class FlaskIris:
         """
         return iris.offload(strategy=strategy, return_type=return_type, **kwargs)
 
+    def _parse_payload(self, msg: Any) -> Any:
+        """
+        Smart helper to convert incoming bytes from the Iris mesh into Python objects.
+        Handles JSON fallback automatically.
+        """
+        if isinstance(msg, bytes):
+            try:
+                if HAS_ORJSON:
+                    return orjson.loads(msg)
+                else:
+                    return json.loads(msg.decode('utf-8'))
+            except Exception:
+                pass # Fallback to raw message if decoding fails
+        return msg
+
     def actor(self, name: str, budget: int = 100, release_gil: bool = False, auto_json: bool = True):
         """
         Decorator to automatically spawn and register a push actor on startup.
@@ -61,13 +83,8 @@ class FlaskIris:
         def decorator(fn):
             @functools.wraps(fn)
             def wrapped_handler(msg: Union[bytes, PySystemMessage]):
-                if auto_json and isinstance(msg, bytes):
-                    try:
-                        # orjson natively parses bytes directly. No decoding needed.
-                        payload = orjson.loads(msg)
-                        return fn(payload)
-                    except (orjson.JSONDecodeError, TypeError):
-                        pass # Fallback to raw message if decoding fails
+                if auto_json:
+                    msg = self._parse_payload(msg)
                 return fn(msg)
 
             def setup(rt):
@@ -88,13 +105,8 @@ class FlaskIris:
         def decorator(fn):
             @functools.wraps(fn)
             def wrapped_handler(msg: Union[bytes, PySystemMessage]):
-                if auto_json and isinstance(msg, bytes):
-                    try:
-                        # orjson natively parses bytes directly. No decoding needed.
-                        payload = orjson.loads(msg)
-                        return fn(payload)
-                    except (orjson.JSONDecodeError, TypeError):
-                        pass
+                if auto_json:
+                    msg = self._parse_payload(msg)
                 return fn(msg)
 
             def setup(rt):
@@ -118,46 +130,46 @@ class FlaskIris:
     def _prepare_payload(self, payload: Any) -> bytes:
         """
         Smart helper to convert various types into bytes for the Iris mesh.
-        Handles dicts, lists, strings, and raw bytes.
+        Handles dicts, lists, strings, and raw bytes with JSON fallbacks.
         """
         if isinstance(payload, bytes):
             return payload
         if isinstance(payload, str):
             return payload.encode('utf-8')
-        
+
         try:
-            # orjson.dumps returns bytes directly
-            return orjson.dumps(payload)
-        except (TypeError, orjson.JSONEncodeError):
+            if HAS_ORJSON:
+                return orjson.dumps(payload)
+            else:
+                return json.dumps(payload).encode('utf-8')
+        except Exception as e:
             try:
                 # Last resort fallback for non-serializable objects
+                logger.error(f"Iris payload preparation failed for JSON: {e}")
                 return str(payload).encode('utf-8')
-            except Exception as e:
-                logger.error(f"Iris payload preparation failed: {e}")
+            except Exception as inner_e:
+                logger.error(f"Iris payload string-cast failed: {inner_e}")
                 return b""
 
     def cast(self, target: Union[str, int], payload: Any) -> bool:
         """
         Smart helper to serialize and send a payload.
         Handles both registered names (str) and PIDs (int).
-        
-        This fixed version checks the type of 'target' to avoid 
-        TypeError when passing remote proxy PIDs.
         """
         data = self._prepare_payload(payload)
-        
+
         # If target is an integer, it is a PID. Use direct send.
         if isinstance(target, int):
-            return self.send(target, data)
-        
+            return self.rt.send(target, data)
+
         # If target is a string, resolve name and send.
-        return self.send_named(str(target), data)
+        return self.rt.send_named(str(target), data)
 
     def cast_path(self, path: str, payload: Any) -> bool:
         """Smart helper to serialize and send a payload to a path-registered actor."""
         target_pid = self.whereis_path(path)
         if target_pid:
-            return self.send(target_pid, self._prepare_payload(payload))
+            return self.rt.send(target_pid, self._prepare_payload(payload))
         return False
 
     # --- Spawning & Actors ---
@@ -192,21 +204,21 @@ class FlaskIris:
 
     # --- Messaging & Timers ---
 
-    def send(self, pid: int, data: bytes) -> bool:
-        """Send user bytes to a PID."""
-        return self.rt.send(pid, data)
+    def send(self, pid: int, data: Any) -> bool:
+        """Send user data to a PID (automatically serializes to bytes)."""
+        return self.rt.send(pid, self._prepare_payload(data))
 
-    def send_named(self, name: str, data: bytes) -> bool:
-        """Resolve and send by registered name."""
-        return self.rt.send_named(name, data)
+    def send_named(self, name: str, data: Any) -> bool:
+        """Resolve and send by registered name (automatically serializes to bytes)."""
+        return self.rt.send_named(name, self._prepare_payload(data))
 
-    def send_after(self, pid: int, delay_ms: int, data: bytes) -> int:
+    def send_after(self, pid: int, delay_ms: int, data: Any) -> int:
         """Schedule a one-shot message to be sent after `delay_ms` milliseconds."""
-        return self.rt.send_after(pid, delay_ms, data)
+        return self.rt.send_after(pid, delay_ms, self._prepare_payload(data))
 
-    def send_interval(self, pid: int, interval_ms: int, data: bytes) -> int:
+    def send_interval(self, pid: int, interval_ms: int, data: Any) -> int:
         """Schedule a repeating message to be sent every `interval_ms` milliseconds."""
-        return self.rt.send_interval(pid, interval_ms, data)
+        return self.rt.send_interval(pid, interval_ms, self._prepare_payload(data))
 
     def set_overflow_policy(self, pid: int, policy: str, target: Optional[int] = None):
         """Configure how a bounded mailbox handles overflow."""
@@ -314,9 +326,9 @@ class FlaskIris:
         """Start TCP server for remote messages and name resolution."""
         self.rt.listen(addr)
 
-    def send_remote(self, addr: str, pid: int, data: bytes):
-        """Send data to a PID on a remote node."""
-        self.rt.send_remote(addr, pid, data)
+    def send_remote(self, addr: str, pid: int, data: Any):
+        """Send data to a PID on a remote node (automatically serializes to bytes)."""
+        self.rt.send_remote(addr, pid, self._prepare_payload(data))
 
     def monitor_remote(self, addr: str, pid: int):
         """Watch a remote PID; triggers local supervisor on failure."""
@@ -354,13 +366,21 @@ class FlaskIris:
         """Return the number of queued user messages for the actor with `pid`."""
         return self.rt.mailbox_size(pid)
 
-    def selective_recv(self, pid: int, matcher: Callable, timeout: Optional[float] = None) -> Awaitable[Optional[Union[bytes, PySystemMessage]]]:
+    def selective_recv(self, pid: int, matcher: Callable, timeout: Optional[float] = None, auto_json: bool = True) -> Awaitable[Optional[Any]]:
         """Return an awaitable that resolves when `matcher(msg)` is True."""
-        return self.rt.selective_recv(pid, matcher, timeout)
+        async def _wrapper():
+            res = await self.rt.selective_recv(pid, matcher, timeout)
+            if res is not None and auto_json:
+                return self._parse_payload(res)
+            return res
+        return _wrapper()
 
-    def selective_recv_blocking(self, pid: int, matcher: Callable, timeout: Optional[float] = None) -> Optional[Union[bytes, PySystemMessage]]:
+    def selective_recv_blocking(self, pid: int, matcher: Callable, timeout: Optional[float] = None, auto_json: bool = True) -> Optional[Any]:
         """Blocking convenience wrapper around `selective_recv` for sync code."""
-        return self.rt.selective_recv_blocking(pid, matcher, timeout)
+        res = self.rt.selective_recv_blocking(pid, matcher, timeout)
+        if res is not None and auto_json:
+            return self._parse_payload(res)
+        return res
 
     # --- Global Limits ---
 
