@@ -1,8 +1,8 @@
 # Flask-Iris 🌸
 
-Bring the power of Erlang-style actors, distributed service mesh, and native Rust JIT compute to your Flask applications.
+Bring the power of Erlang-style actors, distributed service mesh to your Flask applications.
 
-**Flask-Iris** is an extension that wraps the [Iris distributed runtime fabric](https://github.com/SSL-ACTX/iris). It allows your synchronous HTTP routes to seamlessly offload heavy computations via Cranelift JIT and dispatch asynchronous, fault-tolerant background tasks using high-concurrency actors.
+**Flask-Iris** is an extension that wraps the [Iris distributed runtime fabric](https://github.com/SSL-ACTX/iris). It allows your synchronous HTTP routes to dispatch asynchronous, fault-tolerant background tasks using high-concurrency actors.
 
 📖 **[Full Usage Documentation →](docs/usage.md)**
 
@@ -12,7 +12,6 @@ Bring the power of Erlang-style actors, distributed service mesh, and native Rus
 
 * **Zero-Boilerplate Actors**: Use the `@actor` decorator to spin up background workers that process events outside the web request cycle.
 * **Self-Healing Workers**: Use `@supervised_actor` to create path-scoped actors that automatically restart if they crash.
-* **JIT Offloading**: Access `iris.offload` directly alongside your Flask routes for bare-metal math performance.
 * **Seamless Serialization**: Use `.cast()` and `.cast_path()` to automatically serialize Python dictionaries into JSON bytes and route them to registered actors.
 * **Distributed Mesh Ready**: Communicate across node boundaries using Iris's built-in TCP mesh protocol.
 
@@ -75,25 +74,6 @@ def process_payment():
 
 if __name__ == "__main__":
     app.run(port=5000)
-
-```
-
----
-
-## 🧠 Using JIT Compute
-
-You can still use standard Iris features like Cranelift JIT offloading right inside your Flask routes:
-
-```python
-@iris.offload(strategy="jit", return_type="float")
-def fast_math(x: float) -> float:
-    return x * 1.5 + 42.0
-
-@app.route("/api/compute")
-def compute():
-    # This executes outside the Python interpreter for maximum speed
-    result = fast_math(100.0)
-    return jsonify({"result": result})
 
 ```
 

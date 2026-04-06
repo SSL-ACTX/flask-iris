@@ -10,7 +10,6 @@
 2. [Decorators](#2-decorators)
    - [@actor](#21-actor)
    - [@supervised_actor](#22-supervised_actor)
-   - [@offload (JIT)](#23-offload-jit)
 3. [Smart Send Helpers](#3-smart-send-helpers)
 4. [Spawning Actors](#4-spawning-actors)
 5. [Messaging & Timers](#5-messaging--timers)
@@ -53,7 +52,7 @@ def create_app():
     return app
 ```
 
-`init_app` starts the Iris runtime, enables JIT logging, and fires any actor/supervisor decorators that were registered before the runtime was available.
+`init_app` starts the Iris runtime and fires any actor/supervisor decorators that were registered before the runtime was available.
 
 ---
 
@@ -107,29 +106,6 @@ def payment_handler(payload: dict):
     if payload.get("amount", 0) < 0:
         raise ValueError("Negative amount — crashing for demo")
     print(f"Processing payment: {payload}")
-```
-
----
-
-### 2.3 `@offload` (JIT)
-
-Compiles a Python function to native machine code via **Cranelift JIT**, bypassing the Python interpreter for maximum arithmetic throughput. Available as both a static method on the class and a direct `iris.offload` pass-through.
-
-```python
-FlaskIris.offload(strategy="jit", return_type="float", **kwargs)
-# or equivalently on an instance:
-iris_ext.offload(strategy="jit", return_type="float")
-```
-
-```python
-@FlaskIris.offload(strategy="jit", return_type="float")
-def vector_magnitude(x: float, y: float, z: float) -> float:
-    return (x*x + y*y + z*z) ** 0.5
-
-@app.route("/compute")
-def compute():
-    result = vector_magnitude(3.0, 4.0, 0.0)   # runs at native speed
-    return {"magnitude": result}
 ```
 
 ---
@@ -403,7 +379,7 @@ def smart_handler(msg):
 
 ## 13. Full Examples
 
-### Single-node app with actors, supervision, and JIT
+### Single-node app with actors and supervision
 
 ```python
 from flask import Flask, jsonify, request
@@ -416,10 +392,6 @@ iris_ext = FlaskIris(app)
 def log_worker(payload: dict):
     print(f"[Logger] {payload}")
 
-@FlaskIris.offload(strategy="jit", return_type="float")
-def magnitude(x: float, y: float, z: float) -> float:
-    return (x*x + y*y + z*z) ** 0.5
-
 @iris_ext.supervised_actor("/svc/fragile", budget=50)
 def fragile(payload: dict):
     if payload.get("crash"):
@@ -430,11 +402,6 @@ def fragile(payload: dict):
 def log():
     iris_ext.cast("logger", request.json or {})
     return jsonify({"status": "ok"})
-
-@app.route("/compute")
-def compute():
-    result = magnitude(3.0, 4.0, 0.0)
-    return jsonify({"result": result})
 
 @app.route("/fragile", methods=["POST"])
 def call_fragile():
